@@ -153,8 +153,14 @@ int main(int argc, char *argv[]) {
 	{
 		//printMatrix(work);
 
-        int num_threads = 32;
+        int num_threads = 30;
         pthread_t   *threads;
+
+        if(num_threads > work->row)
+        {
+            num_threads = work->row;
+        }
+        
         threads = malloc(sizeof(*threads) * num_threads);
         matrixMutliplyWorkChunk *workChunks = malloc(sizeof(matrixMutliplyWorkChunk) * num_threads);
         int chunk = work->row/num_threads;
