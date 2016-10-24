@@ -104,17 +104,17 @@ void add_edge_to_vertex(struct vertex *v1, struct vertex *v2) {
 
 struct vertex_id_map **read_graph(char *filename) {
     FILE *fp = fopen(filename, "rb");
-    FILE *fw = fopen("graph.txt", "w");
 
     if (!fp) {
         printf("Failed to open:");
         return NULL;
     }
     
+	 /*FILE *fw = fopen("graph.txt", "w");
     if (!fw) {
         printf("Failed to open:");
         return NULL;
-    }
+    }*/
 
     fseek(fp, 0, SEEK_END);
     u_int64_t   filesize = ftell(fp);
@@ -167,10 +167,10 @@ struct vertex_id_map **read_graph(char *filename) {
         }
 
         add_edge_to_vertex(from_v, to_v);
-        fprintf(fw,"%lld\t%lld\n",raw_edges[edge_index].from, raw_edges[edge_index].to);
+        //fprintf(fw,"%lld\t%lld\n",raw_edges[edge_index].from, raw_edges[edge_index].to);
     }
 
-    fclose(fw);
+    //fclose(fw);
     return graph;
 }
 
@@ -223,8 +223,8 @@ void bfs(struct vertex_id_map **graph, int root) {
 
         for (i = 0; i < v->edge_count; i++) {
             struct vertex *nv = v->edges[i];
-            if (nv->level == UNVISITED ||
-                nv->level > (v->level + 1)) {
+            if (nv->level == UNVISITED)// || nv->level > (v->level + 1)) 
+			{
                 // Label
                 nv->level = v->level + 1;
                 // enqueue

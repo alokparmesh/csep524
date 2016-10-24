@@ -1,3 +1,4 @@
+
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,9 +53,9 @@ void freematrixMutliplyWork(matrixMutliplyWork *work)
     free(work);
 }
 
-void *multiply(void* arg)
+void * multiply(void* arg)
 {   
-    matrixMutliplyWorkChunk  *workChunk = arg;
+    matrixMutliplyWorkChunk  *workChunk = (matrixMutliplyWorkChunk  *)arg;
     int i, j;
     matrixMutliplyWork* work = workChunk->fullWork;
     printf("Start %d\t End %d\n", workChunk->start, workChunk->end);
@@ -67,6 +68,8 @@ void *multiply(void* arg)
         }
         work->output[i] = sum;
     }
+
+	return NULL;
 }
 
 void printMatrix(matrixMutliplyWork *work)
@@ -161,8 +164,8 @@ int main(int argc, char *argv[]) {
             num_threads = work->row;
         }
         
-        threads = malloc(sizeof(*threads) * num_threads);
-        matrixMutliplyWorkChunk *workChunks = malloc(sizeof(matrixMutliplyWorkChunk) * num_threads);
+        threads = (pthread_t *)malloc(sizeof(*threads) * num_threads);
+        matrixMutliplyWorkChunk *workChunks = (matrixMutliplyWorkChunk *) malloc(sizeof(matrixMutliplyWorkChunk) * num_threads);
         int chunk = work->row/num_threads;
 
         if(work->row % num_threads != 0)
@@ -203,6 +206,8 @@ int main(int argc, char *argv[]) {
         }
         
         printOutput(work->output,work->row);
+        free(threads);
+        free(workChunks);
 		freematrixMutliplyWork(work);
 	}
 
