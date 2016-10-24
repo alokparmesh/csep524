@@ -1,9 +1,13 @@
+
+
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <inttypes.h>
+#include <time.h> 
 
 void *zmalloc(size_t size) {
     void *ptr = malloc(size);
@@ -190,7 +194,6 @@ void for_all_vertices(struct vertex_id_map **map, void(*func)(struct vertex *, v
     }
 }
 
-
 #define UNVISITED   (-1)
 void _clear_bfs_state(struct vertex *v, void *arg) {
     v->level = UNVISITED;
@@ -226,7 +229,7 @@ void bfs(struct vertex_id_map **graph, int root) {
 
         for (i = 0; i < v->edge_count; i++) {
             struct vertex *nv = v->edges[i];
-            if (nv->level == UNVISITED ||nv->level >(v->level + 1)) 
+            if (nv->level == UNVISITED || nv->level >(v->level + 1))
             {
                 // Label
                 nv->level = v->level + 1;
@@ -245,12 +248,248 @@ void bfs(struct vertex_id_map **graph, int root) {
     }
 }
 
+#define NUM_THREADS  (10)
+typedef struct {
+    struct vertex_id_map **map;
+    u_int64_t start;
+    u_int64_t end;
+    void(*func)(struct vertex *, void *);
+    void *arg;
+} hashMapIteratorWorkChunk;
+
+void * parallel_for_all_vertices(void* arg) {
+    u_int64_t i;
+    struct vertex_id_map *vm;
+    hashMapIteratorWorkChunk * workChunk = (hashMapIteratorWorkChunk  *)arg;
+
+    for (i = workChunk->start; i < workChunk->end; i++) {
+        vm = workChunk->map[i];
+        while (vm) {
+            workChunk->func(vm->vertex, workChunk->arg);
+            vm = vm->next;
+        }
+    }
+
+    return NULL;
+}
+
+void parallel_clear_bfs_state(struct vertex_id_map **graph) {
+    int num_threads = NUM_THREADS;
+    pthread_t   *threads;
+
+    if (num_threads > HASH_MAP_SIZE)
+    {
+        num_threads = HASH_MAP_SIZE;
+    }
+
+    threads = (pthread_t *)malloc(sizeof(*threads) * num_threads);
+    hashMapIteratorWorkChunk *workChunks = (hashMapIteratorWorkChunk *)malloc(sizeof(hashMapIteratorWorkChunk) * num_threads);
+
+    u_int64_t i, start = 0;
+    u_int64_t chunk = HASH_MAP_SIZE / ((u_int64_t)num_threads);
+    for (i = 0;i < num_threads;i++)
+    {
+        workChunks[i].map = graph;
+        workChunks[i].func = _clear_bfs_state;
+        workChunks[i].arg = NULL;
+        workChunks[i].start = start;
+
+        if (start + chunk < HASH_MAP_SIZE)
+        {
+            workChunks[i].end = start + chunk;
+        }
+        else
+        {
+            workChunks[i].end = HASH_MAP_SIZE;
+        }
+
+        start = start + chunk;
+
+        if (pthread_create(&threads[i], NULL, parallel_for_all_vertices, &workChunks[i]) != 0)
+        {
+            perror("Failed to create thread\n");
+        }
+    }
+
+    // Join threads
+    for (i = 0; i < num_threads; i++)
+    {
+        pthread_join(threads[i], NULL);
+    }
+
+    free(threads);
+    free(workChunks);
+}
+
+typedef struct {
+    struct vertex * levelStart;
+    struct vertex * levelEnd;
+    pthread_mutex_t * levelLock;
+    u_int64_t unprocessedCount;
+    u_int64_t level;
+} levelQueue;
+
+levelQueue * InitLevelQueue(u_int64_t level)
+{
+    levelQueue * newLevelQueue = (levelQueue*)zmalloc(sizeof(levelQueue));   
+    newLevelQueue->level = level;
+    return newLevelQueue;
+}
+
+void AddToLevelQueue(levelQueue * queue, struct vertex *v)
+{
+    if (v->level == UNVISITED)
+    {
+        pthread_mutex_lock(queue->levelLock);
+        if (v->level == UNVISITED)
+        {
+            v->level = queue->level;
+
+            if (queue->levelEnd != NULL)
+            {
+                queue->levelEnd->next = v;
+                v->prev = queue->levelEnd;
+                queue->levelEnd = v;
+            }
+            else
+            {
+                // first element
+                queue->levelStart = queue->levelEnd = v;
+            }
+
+            queue->unprocessedCount++;
+        }
+        pthread_mutex_unlock(queue->levelLock);
+    }
+}
+
+struct vertex * RemoveFromLevelQueue(levelQueue * queue)
+{
+    struct vertex * v = NULL;
+    pthread_mutex_lock(queue->levelLock);
+   
+    if (queue->levelStart != NULL)
+    {
+        if (queue->levelStart == queue->levelEnd)
+        {
+            v = queue->levelStart;
+            queue->levelStart = queue->levelEnd = NULL;
+            queue->unprocessedCount = 0;
+        }
+        else
+        {
+            v = queue->levelStart;
+            queue->levelStart = queue->levelStart->next;
+            queue->levelStart->prev = NULL;
+            queue->unprocessedCount--;
+        }
+    }
+
+    pthread_mutex_unlock(queue->levelLock);
+    return v;
+}
+
+typedef struct {
+    levelQueue * currentLevel;
+    levelQueue * nextLevel;
+} bfsWork;
+
+void * parallel_bfs_work(void* arg) 
+{
+    u_int64_t i;
+    bfsWork * workChunk = (bfsWork  *)arg;
+
+    struct vertex * v = RemoveFromLevelQueue(workChunk->currentLevel);
+
+    while (v)
+    {
+        for (i = 0; i < v->edge_count; i++)
+        {
+            struct vertex *nv = v->edges[i];
+            AddToLevelQueue(workChunk->nextLevel, nv);
+        }
+
+        v = RemoveFromLevelQueue(workChunk->currentLevel);
+    }
+
+    return NULL;
+}
+
+void parallelbfs(struct vertex_id_map **graph, int root) {
+    u_int64_t i;
+    parallel_clear_bfs_state(graph);
+    struct vertex *start = NULL, *end = NULL;
+
+    struct vertex *v = locate_vertex_from_id(graph, root);
+
+    if (!v)
+        return;
+
+    levelQueue * currentLevel = InitLevelQueue(0);
+    pthread_mutex_t lock1;
+    pthread_mutex_init(&lock1, NULL);
+    currentLevel->levelLock = &lock1;
+    AddToLevelQueue(currentLevel, v);
+
+    levelQueue * nextLevel = InitLevelQueue(currentLevel->level + 1);
+    pthread_mutex_t lock2;
+    pthread_mutex_init(&lock2, NULL);
+    nextLevel->levelLock = &lock2;
+
+    do
+    {
+        int num_threads = NUM_THREADS;
+        pthread_t   *threads;
+
+        if (num_threads > currentLevel->unprocessedCount)
+        {
+            num_threads = currentLevel->unprocessedCount;
+        }
+
+        threads = (pthread_t *)malloc(sizeof(*threads) * num_threads);
+        bfsWork *workChunks = (bfsWork *)malloc(sizeof(bfsWork) * num_threads);
+
+        u_int64_t i, start = 0;
+        u_int64_t chunk = HASH_MAP_SIZE / ((u_int64_t)num_threads);
+        for (i = 0;i < num_threads;i++)
+        {
+            workChunks[i].currentLevel = currentLevel;
+            workChunks[i].nextLevel = nextLevel;
+
+            if (pthread_create(&threads[i], NULL, parallel_bfs_work, &workChunks[i]) != 0)
+            {
+                perror("Failed to create thread\n");
+            }
+        }
+
+        // Join threads
+        for (i = 0; i < num_threads; i++)
+        {
+            pthread_join(threads[i], NULL);
+        }
+
+        free(threads);
+        free(workChunks);
+
+        pthread_mutex_t * currentLevellock = currentLevel->levelLock;
+        free(currentLevel);
+        currentLevel = nextLevel;
+        nextLevel = InitLevelQueue(nextLevel->level + 1);
+        nextLevel->levelLock = currentLevellock;
+
+    } while (currentLevel->unprocessedCount > 0);
+
+    free(currentLevel);
+    free(nextLevel);
+}
+
 struct _gather_statistics_s {
     u_int64_t *vertices;
     u_int64_t *reached_vertices;
     u_int64_t *edges;
     int64_t *max_level;
 };
+
 void _grather_statistics(struct vertex *v, void *v_arg) {
     struct _gather_statistics_s *arg = (struct _gather_statistics_s *)v_arg;
 
@@ -281,9 +520,18 @@ void grather_statistics(struct vertex_id_map **graph,
     for_all_vertices(graph, _grather_statistics, &arg);
 }
 
+u_int64_t timediff(clock_t t1, clock_t t2) {
+    u_int64_t elapsed;
+    elapsed = ((double)t2 - t1) / CLOCKS_PER_SEC * 1000;
+    return elapsed;
+}
+
 int main(int argc, char *argv[]) {
     u_int64_t vertices, reached_vertices, edges;
     int64_t max_level;
+    clock_t t1, t2;
+    u_int64_t elapsed;
+    int i;
 
     if (argc != 3) {
         printf("usage: %s graph_file root_id", argv[0]);
@@ -296,7 +544,32 @@ int main(int argc, char *argv[]) {
         exit(-1);
 
     u_int64_t root = atoi(argv[2]);
-    bfs(graph, root);
+
+
+    t1 = clock();
+    for (i = 0;i < 100;i++)
+    {
+        parallelbfs(graph, root);
+    }
+    t2 = clock();
+    elapsed = timediff(t1, t2);
+
+    printf("\nParallel Operation took %lld milliseconds\n", elapsed);
+
+    grather_statistics(graph, &vertices, &reached_vertices, &edges, &max_level);
+
+    printf("Graph vertices: %lld with total edges %lld.  Reached vertices from %lld is %lld and max level is %lld\n",
+        vertices, edges, root, reached_vertices, max_level);
+
+    t1 = clock();
+    for (i = 0;i < 100;i++)
+    {
+        bfs(graph, root);
+    }
+    t2 = clock();
+    elapsed = timediff(t1, t2);
+
+    printf("\Serial Operation took %lld milliseconds\n", elapsed);
 
     grather_statistics(graph, &vertices, &reached_vertices, &edges, &max_level);
 
