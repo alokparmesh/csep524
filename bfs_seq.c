@@ -12,7 +12,8 @@ void *zmalloc(size_t size) {
         printf("Out of memory\n");
         exit(-__LINE__);
     }
-    bzero(ptr, size);
+
+    memset(ptr, 0, size);
     return ptr;
 }
 
@@ -51,21 +52,21 @@ u_int64_t hash_vertex_id(u_int64_t id) {
 struct vertex_id_map **create_vertex_id_hash() {
     struct vertex_id_map **vertex_id_map;
 
-    vertex_id_map = zmalloc(sizeof(*vertex_id_map) * HASH_MAP_SIZE);
+    vertex_id_map = (struct vertex_id_map **)zmalloc(sizeof(*vertex_id_map) * HASH_MAP_SIZE);
     return vertex_id_map;
 }
 
 struct vertex *create_vertex(u_int64_t id) {
-    struct vertex *v = zmalloc(sizeof(*v));
+    struct vertex *v = (struct vertex *)zmalloc(sizeof(*v));
     v->id = id;
     v->allocated_edges = BASE_VERTEX_ALLOCATION;
-    v->edges = zmalloc(sizeof(*v->edges) * BASE_VERTEX_ALLOCATION);
+    v->edges = (struct vertex   **)zmalloc(sizeof(*v->edges) * BASE_VERTEX_ALLOCATION);
 
     return v;
 }
 
 void insert_vertex_to_id_hash(struct vertex_id_map **vertex_id_map, struct vertex *v) {
-    struct vertex_id_map *vm = zmalloc(sizeof(*vm));
+    struct vertex_id_map *vm = (struct vertex_id_map *)zmalloc(sizeof(*vm));
     vm->id = v->id;
     vm->vertex = v;
     u_int64_t hash = hash_vertex_id(v->id);
@@ -87,7 +88,7 @@ struct vertex *locate_vertex_from_id(struct vertex_id_map **vertex_id_map, u_int
 
 void _add_edge_to_vertex(struct vertex *from, struct vertex *to) {
     if (from->allocated_edges == from->edge_count) {
-        struct vertex **vm = zmalloc(sizeof(*vm) * from->allocated_edges * 2);
+        struct vertex **vm = (struct vertex **)zmalloc(sizeof(*vm) * from->allocated_edges * 2);
         memcpy(vm, from->edges, sizeof(*vm) * from->allocated_edges);
         free(from->edges);
         from->edges = vm;
@@ -109,25 +110,27 @@ struct vertex_id_map **read_graph(char *filename) {
         printf("Failed to open:");
         return NULL;
     }
-    
-	 /*FILE *fw = fopen("graph.txt", "w");
+
+    /*
+    FILE *fw = fopen("graph.txt", "w");
     if (!fw) {
         printf("Failed to open:");
         return NULL;
-    }*/
+    }
+    */
 
     fseek(fp, 0, SEEK_END);
     u_int64_t   filesize = ftell(fp);
 
     u_int64_t edge_count = filesize / (2 * sizeof(u_int64_t));
 
-    struct raw_edge *raw_edges = zmalloc(sizeof(*raw_edges) * edge_count);
+    struct raw_edge *raw_edges = (struct raw_edge *)zmalloc(sizeof(*raw_edges) * edge_count);
 
     fseek(fp, 0, SEEK_SET);
 
     u_int64_t total_read = 0;
 
-    char *base_ptr = (char *) raw_edges;
+    char *base_ptr = (char *)raw_edges;
     while (true) {
         int read_size = fread(base_ptr, 1, filesize, fp);
 
@@ -167,14 +170,14 @@ struct vertex_id_map **read_graph(char *filename) {
         }
 
         add_edge_to_vertex(from_v, to_v);
-        //fprintf(fw,"%lld\t%lld\n",raw_edges[edge_index].from, raw_edges[edge_index].to);
+        //fprintf(fw, "%lld\t%lld\n", raw_edges[edge_index].from, raw_edges[edge_index].to);
     }
 
     //fclose(fw);
     return graph;
 }
 
-void for_all_vertices(struct vertex_id_map **map, void (*func)(struct vertex *, void *), void *arg) {
+void for_all_vertices(struct vertex_id_map **map, void(*func)(struct vertex *, void *), void *arg) {
     u_int64_t i;
     struct vertex_id_map *vm;
 
@@ -223,8 +226,8 @@ void bfs(struct vertex_id_map **graph, int root) {
 
         for (i = 0; i < v->edge_count; i++) {
             struct vertex *nv = v->edges[i];
-            if (nv->level == UNVISITED)// || nv->level > (v->level + 1)) 
-			{
+            if (nv->level == UNVISITED) // ||nv->level >(v->level + 1)) 
+            {
                 // Label
                 nv->level = v->level + 1;
                 // enqueue
@@ -249,7 +252,7 @@ struct _gather_statistics_s {
     int64_t *max_level;
 };
 void _grather_statistics(struct vertex *v, void *v_arg) {
-    struct _gather_statistics_s *arg = v_arg;
+    struct _gather_statistics_s *arg = (struct _gather_statistics_s *)v_arg;
 
     ++(*arg->vertices);
     *(arg->edges) += v->edge_count;
