@@ -1,10 +1,11 @@
-
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <unistd.h>
 
+// Structure for matrix and vector multiplication input and output
 typedef struct{
     int *matrix;
     int *vector;
@@ -13,12 +14,14 @@ typedef struct{
     int column;
 } matrixMutliplyWork;
 
+// Structure to divide the work into chunks
 typedef struct{
     matrixMutliplyWork *fullWork;
     int start;
     int end;
 } matrixMutliplyWorkChunk;
 
+// initialize the structure
 matrixMutliplyWork *initmatrixMutliplyWork()
 {
     matrixMutliplyWork *work = (matrixMutliplyWork*)malloc(sizeof(matrixMutliplyWork)); 
@@ -32,6 +35,7 @@ matrixMutliplyWork *initmatrixMutliplyWork()
     return work;
 }
 
+// Free space allocated for matrix multiplication work
 void freematrixMutliplyWork(matrixMutliplyWork *work)
 {
     if(work-> matrix != NULL)
@@ -53,12 +57,13 @@ void freematrixMutliplyWork(matrixMutliplyWork *work)
     free(work);
 }
 
+// perform the mutliplication work specified by chunk
 void * multiply(void* arg)
 {   
     matrixMutliplyWorkChunk  *workChunk = (matrixMutliplyWorkChunk  *)arg;
     int i, j;
     matrixMutliplyWork* work = workChunk->fullWork;
-    printf("Start %d\t End %d\n", workChunk->start, workChunk->end);
+    //printf("Start %d\t End %d\n", workChunk->start, workChunk->end);
     for (i = workChunk->start; i < workChunk->end; i++)
     {
         int sum = 0;
@@ -72,6 +77,7 @@ void * multiply(void* arg)
 	return NULL;
 }
 
+// print the matrix and vector
 void printMatrix(matrixMutliplyWork *work)
 {
     printf("row : %d, column : %d", work->row, work->column);
@@ -91,6 +97,7 @@ void printMatrix(matrixMutliplyWork *work)
     }
 }
 
+// print output array
 void printOutput(int *array, int size)
 {
     int i;
@@ -100,6 +107,25 @@ void printOutput(int *array, int size)
     }
 }
 
+// write output array to file
+void writeOutput(int *array, int size)
+{
+    FILE *fw = fopen("output.txt", "w");
+    if (!fw) {
+        printf("Failed to open:");
+        return;
+    }
+
+    int i;
+     for (i = 0; i < size; i++) 
+    {
+        fprintf(fw,"%d\n", array[i]);
+    }
+
+    fclose(fw);
+}
+
+// read the input file
 matrixMutliplyWork *read_inputFile(char *filename) {
 	FILE *inputFile = fopen(filename, "r");
 
@@ -144,6 +170,7 @@ matrixMutliplyWork *read_inputFile(char *filename) {
 	return work;
 }
 
+// main program
 int main(int argc, char *argv[]) {
 	if (argc != 2) {
 		printf("usage: %s inputFile\n", argv[0]);
@@ -156,7 +183,8 @@ int main(int argc, char *argv[]) {
 	{
 		//printMatrix(work);
 
-        int num_threads = 30;
+        // set number of threads equal to processors
+        int num_threads = sysconf(_SC_NPROCESSORS_ONLN);;
         pthread_t   *threads;
 
         if(num_threads > work->row)
@@ -173,7 +201,6 @@ int main(int argc, char *argv[]) {
             chunk++;
         }
 
-        printf("Chunk %d\n", chunk);
         int i,start = 0;
 
         for(i=0;i<num_threads;i++)
@@ -205,7 +232,8 @@ int main(int argc, char *argv[]) {
             pthread_join(threads[i], NULL);
         }
         
-        printOutput(work->output,work->row);
+        //printOutput(work->output,work->row);
+        writeOutput(work->output,work->row);
         free(threads);
         free(workChunks);
 		freematrixMutliplyWork(work);
