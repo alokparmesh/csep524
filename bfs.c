@@ -322,6 +322,7 @@ typedef struct {
     u_int64_t level;
 } levelQueue;
 
+// intialize the queue
 levelQueue * InitLevelQueue(u_int64_t level)
 {
     levelQueue * newLevelQueue = (levelQueue*)zmalloc(sizeof(levelQueue));   
