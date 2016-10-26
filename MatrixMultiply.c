@@ -184,7 +184,7 @@ int main(int argc, char *argv[]) {
 		//printMatrix(work);
 
         // set number of threads equal to processors
-        int num_threads = sysconf(_SC_NPROCESSORS_ONLN);;
+        int num_threads = sysconf(_SC_NPROCESSORS_ONLN);
         pthread_t   *threads;
 
         if(num_threads > work->row)

@@ -1,5 +1,4 @@
 
-
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -7,7 +6,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <inttypes.h>
-#include <time.h> 
+#include <unistd.h>
 
 void *zmalloc(size_t size) {
     void *ptr = malloc(size);
@@ -115,14 +114,6 @@ struct vertex_id_map **read_graph(char *filename) {
         return NULL;
     }
 
-    /*
-    FILE *fw = fopen("graph.txt", "w");
-    if (!fw) {
-        printf("Failed to open:");
-        return NULL;
-    }
-    */
-
     fseek(fp, 0, SEEK_END);
     u_int64_t   filesize = ftell(fp);
 
@@ -174,10 +165,8 @@ struct vertex_id_map **read_graph(char *filename) {
         }
 
         add_edge_to_vertex(from_v, to_v);
-        //fprintf(fw, "%lld\t%lld\n", raw_edges[edge_index].from, raw_edges[edge_index].to);
     }
 
-    //fclose(fw);
     return graph;
 }
 
@@ -248,7 +237,6 @@ void bfs(struct vertex_id_map **graph, int root) {
     }
 }
 
-#define NUM_THREADS  (10)
 typedef struct {
     struct vertex_id_map **map;
     u_int64_t start;
@@ -274,7 +262,7 @@ void * parallel_for_all_vertices(void* arg) {
 }
 
 void parallel_clear_bfs_state(struct vertex_id_map **graph) {
-    int num_threads = NUM_THREADS;
+    int num_threads = sysconf(_SC_NPROCESSORS_ONLN);
     pthread_t   *threads;
 
     if (num_threads > HASH_MAP_SIZE)
@@ -438,7 +426,7 @@ void parallelbfs(struct vertex_id_map **graph, int root) {
 
     do
     {
-        int num_threads = NUM_THREADS;
+        int num_threads = sysconf(_SC_NPROCESSORS_ONLN);
         pthread_t   *threads;
 
         if (num_threads > currentLevel->unprocessedCount)
@@ -520,18 +508,9 @@ void grather_statistics(struct vertex_id_map **graph,
     for_all_vertices(graph, _grather_statistics, &arg);
 }
 
-u_int64_t timediff(clock_t t1, clock_t t2) {
-    u_int64_t elapsed;
-    elapsed = ((double)t2 - t1) / CLOCKS_PER_SEC * 1000;
-    return elapsed;
-}
-
 int main(int argc, char *argv[]) {
     u_int64_t vertices, reached_vertices, edges;
-    int64_t max_level;
-    clock_t t1, t2;
-    u_int64_t elapsed;
-    int i;
+    int64_t max_level;  
 
     if (argc != 3) {
         printf("usage: %s graph_file root_id", argv[0]);
@@ -545,36 +524,11 @@ int main(int argc, char *argv[]) {
 
     u_int64_t root = atoi(argv[2]);
 
-
-    t1 = clock();
-    for (i = 0;i < 100;i++)
-    {
-        parallelbfs(graph, root);
-    }
-    t2 = clock();
-    elapsed = timediff(t1, t2);
-
-    printf("\nParallel Operation took %lld milliseconds\n", elapsed);
-
+    parallelbfs(graph, root);
+     
     grather_statistics(graph, &vertices, &reached_vertices, &edges, &max_level);
-
-    printf("Graph vertices: %lld with total edges %lld.  Reached vertices from %lld is %lld and max level is %lld\n",
-        vertices, edges, root, reached_vertices, max_level);
-
-    t1 = clock();
-    for (i = 0;i < 100;i++)
-    {
-        bfs(graph, root);
-    }
-    t2 = clock();
-    elapsed = timediff(t1, t2);
-
-    printf("\Serial Operation took %lld milliseconds\n", elapsed);
-
-    grather_statistics(graph, &vertices, &reached_vertices, &edges, &max_level);
-
-    printf("Graph vertices: %lld with total edges %lld.  Reached vertices from %lld is %lld and max level is %lld\n",
-        vertices, edges, root, reached_vertices, max_level);
+    printf("Graph vertices: %ld with total edges %ld.  Reached vertices from %ld is %ld and max level is %ld\n",
+        vertices, edges, root, reached_vertices, max_level);    
 
     return 0;
 }
