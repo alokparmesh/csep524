@@ -8,6 +8,7 @@
 #include <inttypes.h>
 #include <unistd.h>
 
+// malloc and zero out
 void *zmalloc(size_t size) {
     void *ptr = malloc(size);
 
@@ -237,6 +238,7 @@ void bfs(struct vertex_id_map **graph, int root) {
     }
 }
 
+// structure to define chunk of iteration over hashmap
 typedef struct {
     struct vertex_id_map **map;
     u_int64_t start;
@@ -245,6 +247,7 @@ typedef struct {
     void *arg;
 } hashMapIteratorWorkChunk;
 
+// iterating over a chunk of hashmap
 void * parallel_for_all_vertices(void* arg) {
     u_int64_t i;
     struct vertex_id_map *vm;
@@ -261,6 +264,7 @@ void * parallel_for_all_vertices(void* arg) {
     return NULL;
 }
 
+// clear the bfs states of vertexes in parallel using threads by iteration over chunk
 void parallel_clear_bfs_state(struct vertex_id_map **graph) {
     int num_threads = sysconf(_SC_NPROCESSORS_ONLN);
     pthread_t   *threads;
@@ -309,6 +313,7 @@ void parallel_clear_bfs_state(struct vertex_id_map **graph) {
     free(workChunks);
 }
 
+// stucture to define queue for bfs levels
 typedef struct {
     struct vertex * levelStart;
     struct vertex * levelEnd;
@@ -324,6 +329,7 @@ levelQueue * InitLevelQueue(u_int64_t level)
     return newLevelQueue;
 }
 
+// add a vertext to the end of queue
 void AddToLevelQueue(levelQueue * queue, struct vertex *v)
 {
     if (v->level == UNVISITED)
@@ -351,6 +357,7 @@ void AddToLevelQueue(levelQueue * queue, struct vertex *v)
     }
 }
 
+// remove a vertex from start of the queue
 struct vertex * RemoveFromLevelQueue(levelQueue * queue)
 {
     struct vertex * v = NULL;
@@ -377,11 +384,13 @@ struct vertex * RemoveFromLevelQueue(levelQueue * queue)
     return v;
 }
 
+// structure to share work among pthreads
 typedef struct {
     levelQueue * currentLevel;
     levelQueue * nextLevel;
 } bfsWork;
 
+// work to be done by each thread of iterating over a vertex
 void * parallel_bfs_work(void* arg) 
 {
     u_int64_t i;
@@ -403,6 +412,7 @@ void * parallel_bfs_work(void* arg)
     return NULL;
 }
 
+// function to crete threads and locks to distribute work
 void parallelbfs(struct vertex_id_map **graph, int root) {
     u_int64_t i;
     parallel_clear_bfs_state(graph);
