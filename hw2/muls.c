@@ -4,33 +4,12 @@
 #include <stdlib.h>
 #include <windows.h>
 
-//#include "timing.h"
 #include "opencl_interface.h"
 
 #define WG_SIZE     16
-#define BLOCK_SIZE  2
-char _muls[] =
-"#define WG_SIZE    16\n"\
-"#define BLOCK_SIZE 2\n"\
-OPENCL_CODE(
-    kernel void _muls(
-        global const float *in_vector,
-        global float *out_vector,
-        float scalar) {
-    const int pos = get_global_id(0) & (~(WG_SIZE - 1));
-    const int local_id = get_local_id(0);
-    int i;
-
-    for (i = 0; i < BLOCK_SIZE; i++) {
-        out_vector[pos * BLOCK_SIZE + local_id + i * WG_SIZE] =
-            in_vector[pos * BLOCK_SIZE + local_id + i * WG_SIZE] * scalar;
-    }
-});
-
 
 char _matrixVectorMuls[] =
 "#define WG_SIZE    16\n"\
-"#define BLOCK_SIZE 2\n"\
 OPENCL_CODE(
     kernel void _matrixVectorMuls(
         global const int *in_matrix,
@@ -54,67 +33,6 @@ static cl_program _muls_program;
 void muls_cleanup() {
     if (_muls_init)
         clReleaseProgram(_muls_program);
-}
-
-void muls(const float *in_vector,
-    float *out_vector,
-    float scalar,
-    int len) {
-
-    // Compile kernel program
-    if (!_muls_init) {
-        _muls_program = opencl_compile_program(_muls);
-        _muls_init = true;
-    }
-
-    cl_int err;
-    cl_mem cl_in_vector, cl_out_vector;
-    cl_int cl_len = len;
-
-    // copy input buffer
-    cl_in_vector = clCreateBuffer(
-        opencl_get_context(),
-        CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-        sizeof(float) * len, (void *)in_vector, 
-        &err);
-    clCheckErr(err, "Failed to create device buffer");
-
-    // create output buffer
-    cl_out_vector = clCreateBuffer(
-        opencl_get_context(), 
-        CL_MEM_WRITE_ONLY,
-        sizeof(float) * len, NULL, 
-        &err);
-    clCheckErr(err, "Failed to create device buffer");
-
-    cl_float cl_scalar = scalar;
-
-    // Create Kernel & set arguments
-    cl_kernel kernel;
-    kernel = clCreateKernel(_muls_program, "_muls", &err);
-    clCheckErr(err, "Failed to create kernel");
-    clCheck(clSetKernelArg(kernel, 0, sizeof(cl_in_vector), &cl_in_vector));
-    clCheck(clSetKernelArg(kernel, 1, sizeof(cl_out_vector), &cl_out_vector));
-    clCheck(clSetKernelArg(kernel, 2, sizeof(cl_float), &cl_scalar));
-
-    cl_event kernel_completion;
-    size_t global_work_size[1] = { len / BLOCK_SIZE };
-    size_t local_work_size[1] = { WG_SIZE };
-
-    clCheck(clEnqueueNDRangeKernel(
-        opencl_get_queue(), kernel,
-        1, NULL, 
-        global_work_size, local_work_size, 0, NULL, &kernel_completion));
-
-    clCheck(clWaitForEvents(1, &kernel_completion));
-    clCheck(clReleaseEvent(kernel_completion));
-
-    clCheck(clEnqueueReadBuffer(opencl_get_queue(), cl_out_vector, CL_TRUE,
-        0, len * sizeof(float), out_vector, 0, NULL, NULL));
-
-    clCheck(clReleaseMemObject(cl_in_vector));
-    clCheck(clReleaseMemObject(cl_out_vector));
-    clCheck(clReleaseKernel(kernel));
 }
 
 typedef struct {
@@ -258,16 +176,6 @@ void * multiply(void* arg)
     return NULL;
 }
 
-void host_muls(const float *in_vector,
-    float *out_vector,
-    float scalar,
-    int len) {
-    int i;
-
-    for (i = 0; i < len; i++)
-        out_vector[i] = in_vector[i] * scalar;
-}
-
 void printMatrix(matrixMutliplyWork *work)
 {
     printf("row : %d, column : %d\n", work->actualRow, work->column);
@@ -361,7 +269,6 @@ matrixMutliplyWork *read_inputFile(char *filename) {
     return work;
 }
 
-
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         printf("usage: %s inputFile\n", argv[0]);
@@ -373,73 +280,25 @@ int main(int argc, char *argv[]) {
 
     if (work != NULL)
     {
-        /*
-        printMatrix(work);
-        start = GetTickCount();
+        /*start = GetTickCount();
         multiply(work);
         end = GetTickCount();
-        printf("Host V*S: %.2f milliseconds\n", ((double)((end - start))));
-
-        printOutput(work->output, work->actualRow);
-        //writeOutput(work->output, work->actualRow);
-
-        
-        */
+        printf("Host V*S: %.2f milliseconds\n", ((double)((end - start))));*/
 
         opencl_start();
 
-        printMatrix(work);
+        //printMatrix(work);
 
         start = GetTickCount();
         matrixVectorMuls(work);
         end = GetTickCount();
+        //printf("GPU M*S: %.2f milliseconds\n", ((double)((end - start))));
 
-        printf("GPU M*S: %.2f milliseconds\n", ((double)((end - start))));
-
-        printOutput(work->output, work->actualRow);
+        //printOutput(work->output, work->actualRow);
+        writeOutput(work->output, work->actualRow);
         freematrixMutliplyWork(work);
         muls_cleanup();
         opencl_end();
     }
     return 0;
 }
-
-/*
-float   *vector, *result, temp;
-int     i;
-int     dim = atoi(argv[1]);
-int start, end;
-
-if (dim & (BLOCK_SIZE * WG_SIZE - 1)) {
-dim = (dim & (~(BLOCK_SIZE * WG_SIZE - 1))) + BLOCK_SIZE * WG_SIZE;
-}
-vector = malloc(sizeof(*vector) * dim);
-result = malloc(sizeof(*result) * dim);
-
-for (i = 0; i < dim; i++) {
-vector[i] = i;
-}
-
-start = GetTickCount();
-host_muls(vector, result, 5.0, dim);
-end = GetTickCount();
-printf("Host V*S: %.2f milliseconds\n", ((double)((end - start))) );
-
-// muls(vector, result, 6.0, dim);
-start = GetTickCount();
-muls(vector, result, 7.0, dim);
-end = GetTickCount();
-printf("GPU M*S: %.2f milliseconds\n", ((double)((end - start))));
-
-// Check the results
-for (i = 0; i < dim; i++) {
-temp = vector[i] * 7.0;
-if ((temp != 0.0 || vector[i] != 0.0) && fabs(temp - result[i]) > 0.1 * temp) {
-printf("Result index: %d seems wrong: %f != %f\n",
-i, result[i], temp);
-exit(-__LINE__);
-}
-}
-
-*/
-
