@@ -14,107 +14,152 @@ typedef unsigned __int64 u_int64_t;
 
 #define WG_SIZE     16
 
-char _matrixVectorMuls[] =
+// Adjust this up or down depending on the graph size of interest.
+// It does not effect BFS speed, but it will effect ID -> vertex mapping speed
+#define HASH_MAP_SIZE   (1000001)
+#define UNVISITED   (-1)
+
+char _bfsTraversal[] =
 "#define WG_SIZE    16\n"\
+"#define UNVISITED   (-1)\n"\
 OPENCL_CODE(
-    kernel void _matrixVectorMuls(
-        global const int *in_matrix,
-        global const int *in_vector,
-        global int *out_vector,
-        int row,
-        int column) {
-    const int rowPos = get_group_id(0) * WG_SIZE + get_local_id(0);
-    int colPos;
-    int sum = 0;
-    for (colPos = 0; colPos < column; colPos++) {
-        sum = sum + in_matrix[colPos * row + rowPos] * in_vector[colPos];
+    kernel void _bfsTraversal(
+        global const ulong *rowOffsets,
+        global const ulong *columnIndices,
+        global long *distances,
+        global int *notCompleted,
+        const ulong max_vertex_id,
+        const int level) {
+    const int i = get_group_id(0) * WG_SIZE + get_local_id(0);
+    long j;
+    if (i <= max_vertex_id)
+    {
+        if (distances[i] == level)
+        {
+            notCompleted[0] = 1;
+
+            for (j = rowOffsets[i];j <= rowOffsets[i + 1] - 1;j++)
+            {
+                if (distances[columnIndices[j]] == UNVISITED)
+                {
+                    distances[columnIndices[j]] = level + 1;
+                }
+            }
+        }
     }
-    out_vector[rowPos] = sum;
 });
 
 // Wrapper
-static bool _muls_init = false;
-static cl_program _muls_program;
+static bool _bfsTraversal_init = false;
+static cl_program _bfsTraversal_program;
 
-void muls_cleanup() {
-    if (_muls_init)
-        clReleaseProgram(_muls_program);
+void bfsTraversal_cleanup() {
+    if (_bfsTraversal_init)
+        clReleaseProgram(_bfsTraversal_program);
 }
 
 typedef struct {
-    int *matrix;
-    int *vector;
-    int *output;
-    int actualRow;
-    int row;
-    int column;
-} matrixMutliplyWork;
+    u_int64_t vertex_count;
+    u_int64_t edge_count;
+    u_int64_t max_vertex_id;
+    u_int64_t *columnIndices;
+    u_int64_t *rowOffsets;
+    int64_t *distances;
+} bfsTraversalWork;
 
-void matrixVectorMuls(matrixMutliplyWork *work) {
+void bfsTraversal(bfsTraversalWork *work, int root) {
+    if (root <= work->max_vertex_id)
+    {
+        work->distances[root] = 0;
 
-    // Compile kernel program
-    if (!_muls_init) {
-        _muls_program = opencl_compile_program(_matrixVectorMuls);
-        _muls_init = true;
+        // Compile kernel program
+        if (!_bfsTraversal_init) {
+            _bfsTraversal_program = opencl_compile_program(_bfsTraversal);
+            _bfsTraversal_init = true;
+        }
+
+        int notCompleted[] = { 0 };
+        cl_int err;
+        cl_mem rowOffsets, columnIndices, distances, notCompletedBuffer;
+        cl_ulong max_vertex_id = work->max_vertex_id;
+        cl_int level = 0;
+
+        rowOffsets = clCreateBuffer(
+            opencl_get_context(),
+            CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+            sizeof(cl_ulong) *(work->max_vertex_id + 2), (void *)work->rowOffsets,
+            &err);
+        clCheckErr(err, "Failed to create device buffer");
+
+        columnIndices = clCreateBuffer(
+            opencl_get_context(),
+            CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+            sizeof(cl_ulong) *  work->edge_count, (void *)work->columnIndices,
+            &err);
+        clCheckErr(err, "Failed to create device buffer");
+
+        distances = clCreateBuffer(
+            opencl_get_context(),
+            CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
+            sizeof(cl_long) *(work->max_vertex_id + 1), (void *)work->distances,
+            &err);
+        clCheckErr(err, "Failed to create device buffer");
+
+        notCompletedBuffer = clCreateBuffer(
+            opencl_get_context(),
+            CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
+            sizeof(cl_int) * 1, (void *)notCompleted,
+            &err);
+        clCheckErr(err, "Failed to create device buffer");
+
+        // Create Kernel & set arguments
+        cl_kernel kernel;
+        kernel = clCreateKernel(_bfsTraversal_program, "_bfsTraversal", &err);
+        clCheckErr(err, "Failed to create kernel");
+        clCheck(clSetKernelArg(kernel, 0, sizeof(rowOffsets), &rowOffsets));
+        clCheck(clSetKernelArg(kernel, 1, sizeof(columnIndices), &columnIndices));
+        clCheck(clSetKernelArg(kernel, 2, sizeof(distances), &distances));
+        clCheck(clSetKernelArg(kernel, 4, sizeof(cl_ulong), &max_vertex_id));
+        
+
+        cl_event kernel_completion;
+        cl_ulong workSize  = max_vertex_id;
+        if (workSize & (WG_SIZE - 1)) {
+            workSize = (workSize & (~(WG_SIZE - 1))) + WG_SIZE;
+        }
+        size_t global_work_size[1] = { workSize };
+        size_t local_work_size[1] = { WG_SIZE };
+
+        notCompleted[0] = 0;
+        do
+        {
+            notCompleted[0] = 0;
+            clCheck(clEnqueueWriteBuffer(opencl_get_queue(), notCompletedBuffer, CL_TRUE,
+                0, sizeof(cl_int) * 1, (void *)notCompleted, 0, NULL, NULL));
+
+            clCheck(clSetKernelArg(kernel, 3, sizeof(notCompletedBuffer), &notCompletedBuffer));
+            clCheck(clSetKernelArg(kernel, 5, sizeof(cl_int), &level));
+            clCheck(clEnqueueNDRangeKernel(
+                opencl_get_queue(), kernel,
+                1, NULL,
+                global_work_size, local_work_size, 0, NULL, &kernel_completion));
+
+            clCheck(clWaitForEvents(1, &kernel_completion));
+            clCheck(clReleaseEvent(kernel_completion));
+
+            clCheck(clEnqueueReadBuffer(opencl_get_queue(), notCompletedBuffer, CL_TRUE,
+                0, sizeof(cl_int) * 1, (void *)notCompleted, 0, NULL, NULL));
+            level++;
+        } while (notCompleted[0] != 0);
+
+        clCheck(clEnqueueReadBuffer(opencl_get_queue(), distances, CL_TRUE,
+            0, sizeof(cl_long) * (work->max_vertex_id + 1), (void *)work->distances, 0, NULL, NULL));
+
+        clCheck(clReleaseMemObject(rowOffsets));
+        clCheck(clReleaseMemObject(columnIndices));
+        clCheck(clReleaseMemObject(distances));
+        clCheck(clReleaseKernel(kernel));
     }
-
-    cl_int err;
-    cl_mem in_matrix, in_vector, out_vector;
-    cl_int row = work->row;
-    cl_int column = work->column;
-
-    // copy input buffer
-    in_matrix = clCreateBuffer(
-        opencl_get_context(),
-        CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-        sizeof(int) * work->row * work->column, (void *)work->matrix,
-        &err);
-    clCheckErr(err, "Failed to create device buffer");
-
-    in_vector = clCreateBuffer(
-        opencl_get_context(),
-        CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-        sizeof(int) * work->column, (void *)work->vector,
-        &err);
-    clCheckErr(err, "Failed to create device buffer");
-
-    // create output buffer
-    out_vector = clCreateBuffer(
-        opencl_get_context(),
-        CL_MEM_WRITE_ONLY,
-        sizeof(int) * work->row, NULL,
-        &err);
-    clCheckErr(err, "Failed to create device buffer");
-
-    // Create Kernel & set arguments
-    cl_kernel kernel;
-    kernel = clCreateKernel(_muls_program, "_matrixVectorMuls", &err);
-    clCheckErr(err, "Failed to create kernel");
-    clCheck(clSetKernelArg(kernel, 0, sizeof(in_matrix), &in_matrix));
-    clCheck(clSetKernelArg(kernel, 1, sizeof(in_vector), &in_vector));
-    clCheck(clSetKernelArg(kernel, 2, sizeof(out_vector), &out_vector));
-    clCheck(clSetKernelArg(kernel, 3, sizeof(cl_int), &row));
-    clCheck(clSetKernelArg(kernel, 4, sizeof(cl_int), &column));
-
-    cl_event kernel_completion;
-    size_t global_work_size[1] = { row };
-    size_t local_work_size[1] = { WG_SIZE };
-
-    clCheck(clEnqueueNDRangeKernel(
-        opencl_get_queue(), kernel,
-        1, NULL,
-        global_work_size, local_work_size, 0, NULL, &kernel_completion));
-
-    clCheck(clWaitForEvents(1, &kernel_completion));
-    clCheck(clReleaseEvent(kernel_completion));
-
-    clCheck(clEnqueueReadBuffer(opencl_get_queue(), out_vector, CL_TRUE,
-        0, sizeof(int) * work->row, (void *)work->output, 0, NULL, NULL));
-
-    clCheck(clReleaseMemObject(in_matrix));
-    clCheck(clReleaseMemObject(in_vector));
-    clCheck(clReleaseMemObject(out_vector));
-    clCheck(clReleaseKernel(kernel));
 }
 
 void *zmalloc(size_t size) {
@@ -128,15 +173,6 @@ void *zmalloc(size_t size) {
     memset(ptr, 0, size);
     return ptr;
 }
-
-typedef struct {
-    u_int64_t vertex_count;
-    u_int64_t edge_count;
-    u_int64_t max_vertex_id;
-    u_int64_t *columnIndices;
-    u_int64_t *rowOffsets;
-    int64_t *distances;
-} bfsTraversalWork;
 
 struct raw_edge {
     u_int64_t   from;
@@ -155,11 +191,6 @@ struct vertex {
     int64_t level;
     struct vertex *prev, *next;
 };
-
-// Adjust this up or down depending on the graph size of interest.
-// It does not effect BFS speed, but it will effect ID -> vertex mapping speed
-#define HASH_MAP_SIZE   (1000001)
-#define UNVISITED   (-1)
 
 struct vertex_id_map {
     u_int64_t id;
@@ -291,7 +322,6 @@ struct vertex_id_map **read_graph(char *filename) {
     return graph;
 }
 
-
 bfsTraversalWork *initbfsTraversalWork()
 {
     bfsTraversalWork *work = (bfsTraversalWork*)zmalloc(sizeof(bfsTraversalWork));
@@ -384,7 +414,6 @@ void for_all_vertices(struct vertex_id_map **map, void(*func)(struct vertex *, v
     }
 }
 
-
 void _clear_bfs_state(struct vertex *v, void *arg) {
     v->level = UNVISITED;
     v->next = NULL;
@@ -457,7 +486,7 @@ void host_bfs(bfsTraversalWork *work, int root)
                 {
                     done = false;
 
-                    for (j = work->rowOffsets[i];j < work->rowOffsets[i + 1] - 1;j++)
+                    for (j = work->rowOffsets[i];j <= work->rowOffsets[i + 1] - 1;j++)
                     {
                         if (work->distances[work->columnIndices[j]] == UNVISITED)
                         {
@@ -551,10 +580,12 @@ int main(int argc, char *argv[]) {
 
     u_int64_t root = atoi(argv[2]);
 
+    opencl_start();
     bfsTraversalWork* work = convertToAdjacencyMatrix(graph);
     //printf("Vertices: %ld  Edges %ld\n", work->vertex_count, work->edge_count);
    
-    host_bfs(work, root);
+    //host_bfs(work, root);
+    bfsTraversal(work, root);
     bfs(graph, root);
 
     grather_statistics(graph, &vertices, &reached_vertices, &edges, &max_level);
@@ -566,5 +597,8 @@ int main(int argc, char *argv[]) {
         vertices, edges, root, reached_vertices, max_level);
 
     freebfsTraversalWork(work);
+
+    bfsTraversal_cleanup();
+    opencl_end();
     return 0;
 }
