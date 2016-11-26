@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <mpi.h>
@@ -102,8 +103,13 @@ matrixMutliplyWork *read_inputFile(char *filename) {
 
     matrixMutliplyWork *work = initmatrixMutliplyWork();
 
-    fscanf(inputFile, "%d,%d\n", &work->row, &work->column);
-    work->matrix = (int*)malloc(sizeof(int) * work->row * work->column);
+    if(!fscanf(inputFile, "%d,%d\n", &work->row, &work->column))
+	{
+		 printf("Failed to read file");
+        return NULL;
+	}
+	
+	work->matrix = (int*)malloc(sizeof(int) * work->row * work->column);
 
     int maxSizeOfLine = sizeof(char) * work->row * 11;
     char * buffer = (char *)malloc(maxSizeOfLine);
