@@ -2,6 +2,6 @@ a.out
 graph.txt
 output.txt
 matvecinput.txt
+graphinput.bin
 hw2_bfs/BfsTraversal/x64/
 *.suo
-hw2_bfs/BfsTraversal/graphinput.bin
