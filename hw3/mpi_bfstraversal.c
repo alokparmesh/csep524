@@ -394,11 +394,11 @@ void mpi_bfs(bfsTraversalWork *work, int root, int myProcess, int numWorkerProce
         {
             MPI_Send(nextLevelQueue + (i * vertexPartitionSize), vertexPartitionSize, MPI_INT, numWorkerProcess, i, MPI_COMM_WORLD);
         }
-        MPI_Barrier(MPI_COMM_WORLD);
+        //MPI_Barrier(MPI_COMM_WORLD);
 
         int * myIncomingQueue = (int*)zmalloc(sizeof(int) * vertexPartitionSize);
         MPI_Recv(myIncomingQueue, vertexPartitionSize, MPI_INT, numWorkerProcess, 0, MPI_COMM_WORLD, MPI_STATUSES_IGNORE);
-        MPI_Barrier(MPI_COMM_WORLD);
+        //MPI_Barrier(MPI_COMM_WORLD);
 
         for (j = 0;j < vertexPartitionSize;j++)
         {
@@ -419,7 +419,7 @@ void mpi_bfs(bfsTraversalWork *work, int root, int myProcess, int numWorkerProce
 
         MPI_Send(&myCurrentLevelQueueSize, 1, MPI_INT, numWorkerProcess, 0, MPI_COMM_WORLD);
         MPI_Bcast(&level, 1, MPI_UNSIGNED, numWorkerProcess, MPI_COMM_WORLD);
-        MPI_Barrier(MPI_COMM_WORLD);
+        //MPI_Barrier(MPI_COMM_WORLD);
         memset(nextLevelQueue, 0, sizeof(int) * numWorkerProcess  * vertexPartitionSize);
     } while (level > 0);
 }
@@ -564,13 +564,13 @@ int main(int argc, char *argv[]) {
                         }
                     }
                 }
-                MPI_Barrier(MPI_COMM_WORLD);
+                //MPI_Barrier(MPI_COMM_WORLD);
 
                 for (i = 0; i < coordinatorProcess; i++)
                 {
                     MPI_Send(nextLevelQueue + (i * vertexPartitionSize), vertexPartitionSize, MPI_INT, i, 0, MPI_COMM_WORLD);
                 }
-                MPI_Barrier(MPI_COMM_WORLD);
+                //MPI_Barrier(MPI_COMM_WORLD);
 
                 //level++;
 
@@ -592,7 +592,7 @@ int main(int argc, char *argv[]) {
                 }
 
                 MPI_Bcast(&level, 1, MPI_UNSIGNED, coordinatorProcess, MPI_COMM_WORLD);
-                MPI_Barrier(MPI_COMM_WORLD);
+                //MPI_Barrier(MPI_COMM_WORLD);
             } while (level > 0);
 
             for (i = 0; i <= work->max_vertex_id; i++)
