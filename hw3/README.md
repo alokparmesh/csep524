@@ -1,3 +1,4 @@
+CSEP 524 Autumn 2016 - Parallel Computation (PMP) - Project 3
 
 Part A: Parallel Matrix Multiply
 
