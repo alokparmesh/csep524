@@ -334,17 +334,20 @@ void bfs(struct vertex_id_map **graph, u_int64_t root) {
 
 void mpi_bfs(bfsTraversalWork *work, int root, int myProcess, int numWorkerProcess)
 {
+    // Calculate max size of queue for each worker process
     int vertexPartitionSize = (work->max_vertex_id + 1) / numWorkerProcess;
 
     if ((work->max_vertex_id + 1) % numWorkerProcess != 0)
         vertexPartitionSize++;
     //printf("Process %d PartitionSize: %I64d\n", myProcess, vertexPartitionSize);
 
+    // Allocate space for current queue and next level queue for each worker process
     int myCurrentLevelQueueSize = 0;
     int * myCurrentLevelQueue = (int*)zmalloc(sizeof(int) * vertexPartitionSize);
+    int * myIncomingQueue = (int*)zmalloc(sizeof(int) * vertexPartitionSize);
     int * nextLevelQueue = (int*)zmalloc(sizeof(int) * numWorkerProcess  * vertexPartitionSize);
 
-    // add root to appropriate current queue
+    // Add root to appropriate current queue if applicable
     unsigned int level = 0;
     if (root % numWorkerProcess == myProcess)
     {
@@ -358,15 +361,18 @@ void mpi_bfs(bfsTraversalWork *work, int root, int myProcess, int numWorkerProce
         u_int64_t i, j;
        // printf("Process %d Level: %I64d with Queue Size %d\n", myProcess, level, myCurrentLevelQueueSize);
 
+        // Iterate through the queue 
         if (myCurrentLevelQueueSize > 0)
         {
             for (i = 0; i <= vertexPartitionSize; i++)
             {
                 if (myCurrentLevelQueue[i] == 1)
                 {
+                    // Get actual vertex id from queue map
                     u_int64_t vertexId = i * numWorkerProcess + myProcess;
                     // printf("Process %d Vertex %I64d\n", myProcess, vertexId);
 
+                    // Iterate through child of vertex if it is on current level and store them in appropriate next level queue
                     if (vertexId <= work->max_vertex_id)
                     {
                         if (work->distances[vertexId] == level)
@@ -390,13 +396,15 @@ void mpi_bfs(bfsTraversalWork *work, int root, int myProcess, int numWorkerProce
         myCurrentLevelQueueSize = 0;
         memset(myCurrentLevelQueue, 0, sizeof(int) * vertexPartitionSize);
 
+        // Communicate all the next level queue back to coordinator process
         for (i = 0; i < numWorkerProcess; i++)
         {
             MPI_Send(nextLevelQueue + (i * vertexPartitionSize), vertexPartitionSize, MPI_INT, numWorkerProcess, i, MPI_COMM_WORLD);
         }
         //MPI_Barrier(MPI_COMM_WORLD);
 
-        int * myIncomingQueue = (int*)zmalloc(sizeof(int) * vertexPartitionSize);
+        // Receive the consolidated next level items for the current process and it to the queue if not processed already
+        memset(myIncomingQueue, 0, sizeof(int) * vertexPartitionSize);
         MPI_Recv(myIncomingQueue, vertexPartitionSize, MPI_INT, numWorkerProcess, 0, MPI_COMM_WORLD, MPI_STATUSES_IGNORE);
         //MPI_Barrier(MPI_COMM_WORLD);
 
@@ -417,11 +425,18 @@ void mpi_bfs(bfsTraversalWork *work, int root, int myProcess, int numWorkerProce
             }
         }
 
+        // Send the queue size back to coordinator process for exit condition
         MPI_Send(&myCurrentLevelQueueSize, 1, MPI_INT, numWorkerProcess, 0, MPI_COMM_WORLD);
+
+        // Receive next level to proceed or 0 to exit
         MPI_Bcast(&level, 1, MPI_UNSIGNED, numWorkerProcess, MPI_COMM_WORLD);
         //MPI_Barrier(MPI_COMM_WORLD);
         memset(nextLevelQueue, 0, sizeof(int) * numWorkerProcess  * vertexPartitionSize);
     } while (level > 0);
+
+    free(myIncomingQueue);
+    free(myCurrentLevelQueue);
+    free(nextLevelQueue);
 }
 
 struct _gather_statistics_s {
@@ -514,12 +529,17 @@ int main(int argc, char *argv[]) {
     int coordinatorProcess = processes - 1;
 
     if (my_process == coordinatorProcess) {
+        // Coordinator process
         struct vertex_id_map **graph = read_graph(argv[1]);
 
         if (!graph)
             exit(-1);
+
+        // Convert graph into rowset and indices matrix for communication
         bfsTraversalWork* work = convertToAdjacencyMatrix(graph);
 
+
+        // Broadcast all the graph structure
         MPI_Bcast(&work->vertex_count, 1, MPI_UNSIGNED_LONG_LONG, coordinatorProcess, MPI_COMM_WORLD);
         MPI_Bcast(&work->max_vertex_id, 1, MPI_UNSIGNED_LONG_LONG, coordinatorProcess, MPI_COMM_WORLD);
         MPI_Bcast(&work->edge_count, 1, MPI_UNSIGNED_LONG_LONG, coordinatorProcess, MPI_COMM_WORLD);
@@ -527,10 +547,12 @@ int main(int argc, char *argv[]) {
         MPI_Bcast(work->rowOffsets, work->max_vertex_id + 2, MPI_UNSIGNED_LONG_LONG, coordinatorProcess, MPI_COMM_WORLD);
         MPI_Bcast(work->columnIndices, work->edge_count, MPI_UNSIGNED_LONG_LONG, coordinatorProcess, MPI_COMM_WORLD);
 
+        // Read and broadcast root
         u_int64_t root = atoi(argv[2]);
         MPI_Bcast(&root, 1, MPI_UNSIGNED_LONG_LONG, coordinatorProcess, MPI_COMM_WORLD);
 
 
+        // Initialize space for each worker process queue
         int vertexPartitionSize = (work->max_vertex_id + 1) / coordinatorProcess;
         if ((work->max_vertex_id + 1) % coordinatorProcess != 0)
             vertexPartitionSize++;
@@ -540,22 +562,24 @@ int main(int argc, char *argv[]) {
         //proceed if node is present in graph
         if ((root <= work->max_vertex_id) && (work->rowOffsets[root] != work->rowOffsets[root + 1]))
         {
-
             unsigned int level = 0;
             int i, j;
 
             do
             {
+                // reset the space for new level
                 //printf("Coordinator Process %d Level: %d\n", my_process, level);
-
                 memset(nextLevelQueue, 0, sizeof(int) * coordinatorProcess  * vertexPartitionSize);
                 memset(myCurrentLevelQueue, 0, sizeof(int) * vertexPartitionSize);
 
+
+                // Receive all next level vertexes from each proces to other process
                 for (i = 0; i < coordinatorProcess * coordinatorProcess; i++)
                 {
                     MPI_Status status;
                     MPI_Recv(myCurrentLevelQueue, vertexPartitionSize, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
 
+                    // Merge the map
                     for (j = 0;j < vertexPartitionSize;j++)
                     {
                         if (myCurrentLevelQueue[j] == 1)
@@ -566,6 +590,7 @@ int main(int argc, char *argv[]) {
                 }
                 //MPI_Barrier(MPI_COMM_WORLD);
 
+                // Send the next level queue items to each worker
                 for (i = 0; i < coordinatorProcess; i++)
                 {
                     MPI_Send(nextLevelQueue + (i * vertexPartitionSize), vertexPartitionSize, MPI_INT, i, 0, MPI_COMM_WORLD);
@@ -574,6 +599,7 @@ int main(int argc, char *argv[]) {
 
                 //level++;
 
+                // Check the queue size from each worker to make sure we need next level iteration or not
                 int totalQueueSize = 0;
                 for (i = 0; i < coordinatorProcess; i++)
                 {
@@ -591,10 +617,13 @@ int main(int argc, char *argv[]) {
                     level = 0;
                 }
 
+                // Broadcast the level
                 MPI_Bcast(&level, 1, MPI_UNSIGNED, coordinatorProcess, MPI_COMM_WORLD);
                 //MPI_Barrier(MPI_COMM_WORLD);
             } while (level > 0);
 
+
+            // Collect the distances of each node
             for (i = 0; i <= work->max_vertex_id; i++)
             {
                 int64_t distance;
@@ -608,12 +637,15 @@ int main(int argc, char *argv[]) {
         printf("Graph vertices: %ld with total edges %ld.  Reached vertices from %ld is %ld and max level is %ld\n",
             vertices, edges, root, reached_vertices, max_level);
 
+        free(nextLevelQueue);
+        free(myCurrentLevelQueue);
         freebfsTraversalWork(work);
     }
     else {
         bfsTraversalWork* work = initbfsTraversalWork();
         u_int64_t root;
 
+        // Recieve common graph structures
         MPI_Bcast(&work->vertex_count, 1, MPI_UNSIGNED_LONG_LONG, coordinatorProcess, MPI_COMM_WORLD);
         MPI_Bcast(&work->max_vertex_id, 1, MPI_UNSIGNED_LONG_LONG, coordinatorProcess, MPI_COMM_WORLD);
         MPI_Bcast(&work->edge_count, 1, MPI_UNSIGNED_LONG_LONG, coordinatorProcess, MPI_COMM_WORLD);
@@ -638,12 +670,14 @@ int main(int argc, char *argv[]) {
         //proceed if node is present in graph
         if ((root <= work->max_vertex_id) && (work->rowOffsets[root] != work->rowOffsets[root + 1]))
         {
+            // Do Bfs traversal
             mpi_bfs(work, root, my_process, coordinatorProcess);
 
             //grather_statistics_bfsTraversalWork(work, &vertices, &reached_vertices, &edges, &max_level);
             //printf("Process %d Graph vertices: %I64d with total edges %I64d.  Reached vertices from %I64d is %I64d and max level is %I64d\n",
              //  my_process, vertices, edges, root, reached_vertices, max_level);
 
+            // return the distances of nodes affinitized to this process
             int i;
             for (i = my_process; i <= work->max_vertex_id; i += coordinatorProcess)
             {

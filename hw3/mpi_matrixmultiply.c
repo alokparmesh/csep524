@@ -103,13 +103,13 @@ matrixMutliplyWork *read_inputFile(char *filename) {
 
     matrixMutliplyWork *work = initmatrixMutliplyWork();
 
-    if(!fscanf(inputFile, "%d,%d\n", &work->row, &work->column))
-	{
-		 printf("Failed to read file");
+    if (!fscanf(inputFile, "%d,%d\n", &work->row, &work->column))
+    {
+        printf("Failed to read file");
         return NULL;
-	}
-	
-	work->matrix = (int*)malloc(sizeof(int) * work->row * work->column);
+    }
+
+    work->matrix = (int*)malloc(sizeof(int) * work->row * work->column);
 
     int maxSizeOfLine = sizeof(char) * work->row * 11;
     char * buffer = (char *)malloc(maxSizeOfLine);
@@ -155,23 +155,28 @@ int main(int argc, char *argv[]) {
     MPI_Comm_size(MPI_COMM_WORLD, &processes);
 
     if (my_process == 0) {
+        // Coordinator process
+
+        // Read the input file and broadcast common information like row count, column count and vector
         matrixMutliplyWork *work = read_inputFile(argv[1]);
         MPI_Bcast(&work->row, 1, MPI_INT, 0, MPI_COMM_WORLD);
         MPI_Bcast(&work->column, 1, MPI_INT, 0, MPI_COMM_WORLD);
         MPI_Bcast(work->vector, work->column, MPI_INT, 0, MPI_COMM_WORLD);
 
+        // Allocate each row to worker processes in a round robin manner
         int i, workerProcessCount = processes - 1;
         for (i = 0; i < work->row; i++)
         {
-            int destination = 1+ (i % workerProcessCount);
+            int destination = 1 + (i % workerProcessCount);
             MPI_Send(&work->matrix[i * work->column], work->column, MPI_INT, destination, 0, MPI_COMM_WORLD);
         }
 
+        // Collect the output from worker process and store
         for (i = 0; i < work->row; i++)
         {
             int output;
             MPI_Status status;
-            MPI_Recv(&output, 1, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD , &status);
+            MPI_Recv(&output, 1, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
             work->output[status.MPI_TAG] = output;
         }
 
@@ -180,6 +185,7 @@ int main(int argc, char *argv[]) {
         freematrixMutliplyWork(work);
     }
     else {
+        // Worker Process
         int row, column;
         int *vector, *matrixRow;
 
@@ -191,8 +197,9 @@ int main(int argc, char *argv[]) {
 
         matrixRow = (int*)malloc(sizeof(int) * column);
 
+        // Receive each row and return the multiplication with vector back
         int currentRow, workerProcessCount = processes - 1;
-        for (currentRow = my_process-1; currentRow <row; currentRow += workerProcessCount)
+        for (currentRow = my_process - 1; currentRow < row; currentRow += workerProcessCount)
         {
             MPI_Recv(matrixRow, column, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
