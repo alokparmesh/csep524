@@ -29,7 +29,7 @@ if __name__ == "__main__":
 
     currentLevelQueue = currentLevelQueue.join(distances).filter(lambda x: x[1][1] == -1).map(lambda x:(x[0],x[1][0]))
     currentLevelQueue.cache()
-    print("CurrentLevel: {}\n".format(currentLevel)  
+    #print("CurrentLevel: {}\n".format(currentLevel))  
 
     while (not(currentLevelQueue.isEmpty())):
         distances = distances.leftOuterJoin(currentLevelQueue).map(lambda x: (x[0],x[1][0]) if x[1][1] is None else (x[0],x[1][1]))
@@ -40,7 +40,7 @@ if __name__ == "__main__":
         currentLevelQueue = nextLevelQueue.distinct().map(lambda x: (x,currentLevel))
         currentLevelQueue = currentLevelQueue.join(distances).filter(lambda x: x[1][1] == -1).map(lambda x:(x[0],x[1][0]))
         currentLevelQueue.cache()
-        print("CurrentLevel: {}\n".format(currentLevel))   
+        #print("CurrentLevel: {}\n".format(currentLevel))   
 
     # Print output
     reached_vertices = distances.filter(lambda x: x[1] != -1).count()
